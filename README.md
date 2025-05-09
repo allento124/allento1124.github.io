@@ -1,1 +1,1 @@
-https://allento1124-github-io.onrender.com
+https:/quize-github-io.onrender.com
