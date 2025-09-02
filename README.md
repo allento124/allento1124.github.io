@@ -1,1 +1,1 @@
-https://allento1124.github.io.com
+allento1124.github.io.
