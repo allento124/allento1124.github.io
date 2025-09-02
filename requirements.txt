@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+pandas
+openpyxl
+python-multipart
+itsdangerous
+starlette
+redis
+aiohttp
+cryptography
+bcrypt
+hvac
+python-dotenv
+werkzeug
+google-genai
