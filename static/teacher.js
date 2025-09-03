@@ -531,6 +531,8 @@ document.getElementById('filterByCategoryBtn').addEventListener('click', functio
                         <span><strong>B:</strong> ${question.option_b || '無選項'}</span><br>
                         <span><strong>C:</strong> ${question.option_c || '無選項'}</span><br>
                         <span><strong>D:</strong> ${question.option_d || '無選項'}</span><br>
+                    </div>
+                        <br><strong>解答：</strong> ${question.correct_answer || '無解答'}
                     `;
                     div.appendChild(optionsDiv);
 
