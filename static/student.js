@@ -45,6 +45,7 @@ let markedQuestionIndex = null; // 新增標記題目索引
 let completedQuestions = new Set(); // 新增已完成題目集合
 let totalQuestions = questions.length;
 let currentUser = getCurrentUser();
+let selectedans = [];
 
 // 異步函數來獲取當前用戶並更新全域變數
 async function setCurrentUser() {
@@ -214,7 +215,8 @@ function showQuestion(index) {
              <button onclick="formatText('fontSize')">A</button>
              <button onclick="formatText('fontFamily')">F</button>
              <button onclick="undo()">↺</button>
-            <div style="margin-top:5px; flex-wrap:wrap;">
+                <!-- 符號工具列 -->
+                <div style="margin-top:5px; flex-wrap:wrap;">
                     <button type="button" onclick="insertSymbol('，')">，</button>
                     <button type="button" onclick="insertSymbol('。')">。</button>
                     <button type="button" onclick="insertSymbol('；')">；</button>
@@ -244,6 +246,7 @@ function showQuestion(index) {
      <textarea id="note-input" placeholder="輸入筆記..." style="width: 100%; height: 80px;">${question.note || ''}</textarea>
  </div>
 `;
+
 
 // 申論題答案輸入框
 const writtenAnswer = document.getElementById('written-answer');
@@ -536,6 +539,7 @@ document.getElementById('start-quiz').addEventListener('click', async function()
         // 設定全域題目變數
         questions.length = 0;
         questions.push(...questionData.questions);
+        selectedAns = new Array(questions.length).fill("");
         showQuestion(0);
     } catch (error) {
         console.error('題目載入時發生錯誤:', error);
@@ -622,6 +626,7 @@ document.getElementById('confirm-answer').addEventListener('click', function() {
         }
         question.answered = true; // 標記題目已作答
         question.answer = writtenAnswer; // 儲存申論題的答案
+        save(currentQuestionIndex,writtenAnswer);
         completedQuestions.add(currentQuestionIndex); // 將當前題目標記為已完成
     } 
     // 處理選擇題型
@@ -632,6 +637,7 @@ document.getElementById('confirm-answer').addEventListener('click', function() {
             return; 
         }
         question.answered = true; // 標記題目已作答
+        save(currentQuestionIndex,question.selectedAnswer);
         completedQuestions.add(currentQuestionIndex); // 將當前題目標記為已完成
     }
 
@@ -644,6 +650,36 @@ document.getElementById('confirm-answer').addEventListener('click', function() {
     }
 });
 
+async function save(questionNumber, answer) {
+    selectedans[questionNumber] = answer;
+
+    try {
+        // 轉成陣列，確保跟 questionIds 對齊
+        const answersArray = questionIds.map((_, index) => selectedans[index] || "");
+
+        // 如果 timer 是 undefined，就給一個預設值 0
+        const safeTimer = timer ?? -1;
+
+        console.log("test:", currentUser, questionIds, answersArray, safeTimer);
+
+        const response = await fetch('/api/SL/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                creator_id: currentUser,
+                question_number: questionIds,
+                selected_answer: answersArray,
+                duration: safeTimer
+            })
+        });
+
+        const result = await response.json();
+        console.log("保存結果:", result);
+
+    } catch (error) {
+        console.log("匯入失敗，請稍後再試。錯誤：" + error);
+    }
+}
 
 
 // 跳題按鈕事件監聽
@@ -697,10 +733,6 @@ document.getElementById('resume-timer').addEventListener('click', function() {
     document.getElementById('pause-timer').style.display = 'block';
     document.getElementById('resume-timer').style.display = 'none';
 });
-
-
-
-
 
 // 在 endQuiz 函數中修改 scoreContainer 內的 HTML 來顯示返回主畫面按鈕
 async function endQuiz() {
@@ -800,19 +832,22 @@ async function endQuiz() {
     document.getElementById("question-container").style.display = "none";
     document.querySelector(".button-container").style.display = "none";
 
-    // 儲存測驗結果
+    // 儲存測驗結果失敗
+    const exquestionNumber = questions.map(q => ({
+        questionNumber: q.questionNumber
+    }));
+
+    const exselectedAnswer = questions.map(q => ({
+        selectedAnswer: q.type === "申論"
+            ? (q.answer ?? null)
+            : (q.selectedAnswer ?? null)
+    }));
+
     const quizResult = {
         username: currentUser,
-        score: parseFloat(scorePercentage.toFixed(2)), // 確保是 float
-        incorrectCount: incorrectCount,
-        date: new Date().toLocaleString(),
-        details: questions.map((question, index) => ({
-            questionNumber: question.questionNumber,
-            selectedAnswer: question.type === "申論" ? question.answer || null : question.selectedAnswer || null,
-            correctAnswer: ans[index]?.gh || "無",
-            isCorrect: (question.type === "申論" ? question.answer : question.selectedAnswer) === (ans[index]?.gh || "無"),
-            explanation: ans[index]?.explanation || "無詳解",
-        })),
+        questionNumber: exquestionNumber,
+        selectedAnswer: exselectedAnswer,
+        date: new Date().toLocaleString()
     };
 
     fetch("/api/questions/save_quiz_result", {
@@ -835,7 +870,6 @@ async function endQuiz() {
             console.error("儲存測驗結果失敗：", error);
         });
 }
-
 
 // 返回主畫面函數
 function returnToHome() {
@@ -1182,23 +1216,84 @@ document.getElementById("book-link").addEventListener("click", async function ()
 
     try {
         const response = await fetch(`/api/questions/get_quiz_history/${currentUser}`);
-        const data = await response.json();
+        if (!response.ok) {
+            throw new Error("無法從伺服器獲取歷史紀錄");
+        }
 
-        if (data.history.length === 0) {
+        const resultData = await response.json();
+
+        if (!resultData.history || resultData.history.length === 0) {
             alert("您目前沒有測驗歷史紀錄！");
             return;
         }
 
+        const history = resultData.history;
         let historyHtml = `<h3>${currentUser} 的歷史紀錄：</h3>`;
 
-        for (const [index, result] of data.history.entries()) {
+        for (const [index, result] of history.entries()) {
+            let score = 0;
+            let incorrectCount = 0;
+
+            const questionIds = result.question_number.map(q => q.questionNumber);
+            const selectedAnswers = result.selected_answer.map(a => a.selectedAnswer);
+            const totalQuestions = questionIds.length;
+
+            // 建立 details 結構
+            const details = questionIds.map((qId, i) => ({
+                questionNumber: qId,
+                selectedAnswer: selectedAnswers[i] || null
+            }));
+
+            // 取得正確答案
+            let ans = [];
+            try {
+                const ansRes = await fetch('/api/questions/get_ans', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: questionIds })
+                });
+
+                if (!ansRes.ok) throw new Error("伺服器回應錯誤");
+
+                const ansData = await ansRes.json();
+                ans = ansData.ans || [];
+            } catch (error) {
+                console.error('題目載入錯誤:', error);
+                alert('載入題目時發生錯誤，請稍後再試');
+                return;
+            }
+
+            // 取得題目內容
+            const questions = await Promise.all(
+                details.map(detail =>
+                    fetch(`/api/questions/view_questions/${detail.questionNumber}`)
+                        .then(res => res.ok ? res.json() : null)
+                        .catch(() => null)
+                )
+            );
+
+            // 計算分數
+            questions.forEach((q, i) => {
+                const selectedAnswer = details[i].selectedAnswer;
+                const correctAnswer = ans[i]?.gh || null;
+
+                if (selectedAnswer === correctAnswer) {
+                    score++;
+                } else {
+                    incorrectCount++;
+                }
+            });
+
+            const scorePercentage = ((score / totalQuestions) * 100).toFixed(2);
+
+            // 組合 HTML 顯示
             historyHtml += `
                 <div>
                     <h4>測驗日期：${result.date}</h4>
-                    <p>總分：${result.score}%</p>
-                    <p>錯誤題數：${result.incorrectCount}</p>
+                    <p>總分：${scorePercentage}%</p>
+                    <p>錯誤題數：${incorrectCount}</p>
                     <button onclick="toggleDetails(${index})">顯示詳情</button>
-                    <button onclick="exportToPDF(${index}, '${result.date}', ${result.score}, ${result.incorrectCount})">匯出 PDF</button>
+                    <button onclick="exportToPDF(${index}, '${result.date}', ${score}, ${incorrectCount})">匯出 PDF</button>
                     <div id="details-${index}" style="display:none;">
                         <table border="1" id="table-${index}" style="width: 100%; text-align: left; color: black;">
                             <thead>
@@ -1214,15 +1309,7 @@ document.getElementById("book-link").addEventListener("click", async function ()
                             <tbody>
             `;
 
-            const questions = await Promise.all(
-                result.details.map(detail =>
-                    fetch(`/api/questions/view_questions/${detail.questionNumber}`)
-                        .then(res => res.ok ? res.json() : null)
-                        .catch(() => null)
-                )
-            );
-
-            result.details.forEach((detail, i) => {
+            details.forEach((detail, i) => {
                 const question = questions[i];
                 if (!question) return;
 
@@ -1235,12 +1322,12 @@ document.getElementById("book-link").addEventListener("click", async function ()
 
                 historyHtml += `
                     <tr>
-                        <td>${detail.questionNumber}</td>
+                        <td>${(i+1)}</td>
                         <td>${question.question_text || '無題目'}</td>
                         <td>${optionsHtml}</td>
                         <td>${detail.selectedAnswer || '未作答'}</td>
-                        <td>${detail.correctAnswer}</td>
-                        <td>${detail.explanation}</td>
+                        <td>${ans[i]?.gh || '無'}</td>
+                        <td>${question.explanation || '無'}</td>
                     </tr>
                 `;
             });
@@ -1251,12 +1338,15 @@ document.getElementById("book-link").addEventListener("click", async function ()
                         <br>
                     </div>
                 </div>
+                <hr>
             `;
         }
 
+        // 顯示在 popup 視窗中
         document.getElementById("popup-window").style.display = "block";
         document.getElementById("popup-title").textContent = "歷史紀錄";
         document.getElementById("popup-body").innerHTML = historyHtml;
+
     } catch (error) {
         console.error("獲取歷史紀錄時發生錯誤：", error);
         alert("無法獲取歷史紀錄，請稍後再試！");
@@ -1430,7 +1520,7 @@ document.getElementById('filterByCategoryBtn').addEventListener('click', functio
                         <span><strong>B:</strong> ${question.option_b || '無選項'}</span><br>
                         <span><strong>C:</strong> ${question.option_c || '無選項'}</span><br>
                         <span><strong>D:</strong> ${question.option_d || '無選項'}</span><br>
-                    `;
+                        `;
                     div.appendChild(optionsDiv);
 
                     div.appendChild(document.createElement('br'));
